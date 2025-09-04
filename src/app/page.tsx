@@ -22,6 +22,7 @@ import {
   calculateNetSales,
 } from '@/lib/mappers';
 import { LaborChart } from '@/components/dashboard/labor-chart';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
 export default async function DashboardPage({
   searchParams,
@@ -118,7 +119,19 @@ export default async function DashboardPage({
             </CardContent>
           </Card>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4">
+            <Card>
+                <CardHeader>
+                    <CardTitle>Weekly Snapshot</CardTitle>
+                    <CardDescription>Key metrics from weekly rollups.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="w-full whitespace-nowrap">
+                    <WeeklySnapshotTable snapshots={weeklySnapshots.slice(0, 20)} />
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
+                </CardContent>
+            </Card>
             <Card>
                 <CardHeader>
                     <CardTitle>Cost Analysis</CardTitle>
@@ -126,15 +139,6 @@ export default async function DashboardPage({
                 </CardHeader>
                 <CardContent>
                     <CostBarsChart />
-                </CardContent>
-            </Card>
-            <Card>
-                <CardHeader>
-                    <CardTitle>Weekly Snapshot</CardTitle>
-                    <CardDescription>Key metrics from weekly rollups.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <WeeklySnapshotTable snapshots={weeklySnapshots.slice(0, 10)} />
                 </CardContent>
             </Card>
         </div>
