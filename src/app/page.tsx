@@ -10,7 +10,6 @@ import { DashboardHeader } from '@/components/dashboard/header';
 import { KpiCard } from '@/components/dashboard/kpi-card';
 import { SalesTrendChart } from '@/components/dashboard/sales-trend-chart';
 import { WeeklySnapshotTable } from '@/components/dashboard/weekly-snapshot-table';
-import { AiChartTool } from '@/components/dashboard/ai-chart-tool';
 import { TopBottomTable } from '@/components/dashboard/top-bottom-table';
 import { StoreHeatmap } from '@/components/dashboard/store-heatmap';
 import { CostBarsChart } from '@/components/dashboard/cost-bars-chart';
@@ -22,6 +21,7 @@ import {
   calculateLaborPercent,
   calculateNetSales,
 } from '@/lib/mappers';
+import { LaborChart } from '@/components/dashboard/labor-chart';
 
 export default async function DashboardPage({
   searchParams,
@@ -80,8 +80,8 @@ export default async function DashboardPage({
           <KpiCard title="Discounts %" value={kpis.discountsPercent} valueLY={kpis.discountsPercentLY} format="percent" positiveIsGood={false}/>
           <KpiCard title="Foundation Donations" value={kpis.foundationDonations} format="currency"/>
         </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-          <Card className="lg:col-span-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
+          <Card>
             <CardHeader>
               <CardTitle>Sales Trend vs LY</CardTitle>
             </CardHeader>
@@ -89,13 +89,12 @@ export default async function DashboardPage({
               <SalesTrendChart />
             </CardContent>
           </Card>
-          <Card className="lg:col-span-3">
+          <Card>
             <CardHeader>
-              <CardTitle>AI Chart Suggestions</CardTitle>
-              <CardDescription>Describe an outcome to see relevant data fields for charts.</CardDescription>
+              <CardTitle>Labor % of Sales</CardTitle>
             </CardHeader>
-            <CardContent>
-                <AiChartTool />
+            <CardContent className="pl-2">
+                <LaborChart />
             </CardContent>
           </Card>
         </div>

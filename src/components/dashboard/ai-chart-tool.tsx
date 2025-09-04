@@ -12,6 +12,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Loader2, Wand2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '../ui/card';
+import { useToast } from '@/hooks/use-toast';
 
 const formSchema = z.object({
   outcome: z.string().min(10, {
@@ -29,6 +30,7 @@ const availableFields = [
 export function AiChartTool() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ suggestedFields: string[]; reasoning: string } | null>(null);
+  const { toast } = useToast();
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -48,7 +50,11 @@ export function AiChartTool() {
       setResult(response);
     } catch (error) {
       console.error("AI suggestion failed:", error);
-      // TODO: show a toast notification here
+      toast({
+        variant: "destructive",
+        title: "AI Suggestion Failed",
+        description: "There was a problem getting suggestions. Please try again.",
+      });
     } finally {
       setLoading(false);
     }
