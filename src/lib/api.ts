@@ -3,7 +3,7 @@ import { mockStoreInfo, getMockPerformance, getMockSnapshots } from './mock-data
 
 const API_BASE = process.env.API_BASE || 'https://wingsetc.dev/api/v1';
 const API_KEY = process.env.API_KEY;
-const MOCK_MODE = process.env.NEXT_PUBLIC_MOCK_MODE === 'true';
+const MOCK_MODE = true;
 
 const fetcher = async (endpoint: string) => {
   const res = await fetch(`${API_BASE}${endpoint}`, {
