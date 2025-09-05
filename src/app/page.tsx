@@ -119,7 +119,7 @@ export default async function DashboardPage({
             </CardContent>
           </Card>
         </div>
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
             <Card>
                 <CardHeader>
                     <CardTitle>Weekly Snapshot</CardTitle>
