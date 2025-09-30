@@ -24,9 +24,10 @@ export interface DailyPerformance {
 }
 
 export interface WeeklySnapshot {
-  start_date: string;
-  end_date: string;
   StoreNbr: string;
+  iso_year: number;
+  week_number: number;
+  period_end: string;
   SalesSubtotal: number;
   FoodSales: number;
   BeerSales: number;
@@ -34,6 +35,12 @@ export interface WeeklySnapshot {
   total_labor_cost: number;
   revenue_per_labor_hr: number;
   covers: number;
+  FoodCost: number;
+  PaperCost: number;
+  LiquorCost: number;
+  BeerCost: number;
+  AlcoholCost: number;
+  DiscountCostPercent: number;
   FoodCostPercent: number;
   LiquorCostPercent: number;
   BeerCostPercent: number;
@@ -43,6 +50,8 @@ export interface WeeklySnapshot {
   AlcoholPourCostPercent: number;
   flpda_net2: number;
   total_flpda_pct: number;
+  ToGo?: number;
+  FoundationDonations?: number;
   [key: string]: any;
 }
 

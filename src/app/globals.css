@@ -66,3 +66,6 @@
     @apply bg-background text-foreground;
   }
 }
+.grid-cols-14 {
+    grid-template-columns: repeat(14, minmax(0, 1fr));
+}

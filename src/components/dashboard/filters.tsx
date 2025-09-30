@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import { DateRange } from "react-day-picker";
-import { addDays, format, startOfYear, endOfYear, subYears } from "date-fns";
+import { addDays, format } from "date-fns";
 import { Calendar as CalendarIcon, Download } from "lucide-react";
+import { getFiscalYTD, getCurrentFiscalYear, getPreviousFiscalYear, getCurrentWeek, getLastWeek, getFiscalMonthToDate, getCurrentFiscalMonth, getPreviousFiscalMonth } from "@/lib/fiscal-dates";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -25,75 +26,197 @@ import { Switch } from "@/components/ui/switch";
 import type { StoreInfo } from "@/types";
 import { Separator } from "../ui/separator";
 
-interface FiltersProps extends React.HTMLAttributes<HTMLDivElement> {
-  storeInfo: StoreInfo[];
+type Props = {
+  storeInfo: StoreInfo[] | Record<string, StoreInfo> | null | undefined;
+  className?: string;
+  onDateChange?: (dateRange: DateRange | undefined) => void;
+  onStoreChange?: (store: string) => void;
+  onDistrictChange?: (district: string) => void;
+  onTimeframeChange?: (timeframe: string) => void;
+  selectedTimeframe?: string;
+};
+
+function normalizeStores(data: Props["storeInfo"]): StoreInfo[] {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  if (typeof data === "object") return Object.values(data);
+  return [];
 }
 
-export function Filters({ className, storeInfo }: FiltersProps) {
-  const [date, setDate] = React.useState<DateRange | undefined>({
-    from: addDays(new Date(), -30),
-    to: new Date(),
+export function Filters({ storeInfo, className, onDateChange, onStoreChange, onDistrictChange, onTimeframeChange, selectedTimeframe = 'monthToDate' }: Props) {
+  // Handle API response shape: [page, total, hasNext, stores[]]
+  const stores = React.useMemo(() => {
+    let arr: any[] = [];
+    
+    // Check if storeInfo is array with stores as 4th element
+    if (Array.isArray(storeInfo) && storeInfo.length >= 4 && Array.isArray(storeInfo[3])) {
+      arr = storeInfo[3];
+    } else if (storeInfo && typeof storeInfo === "object" && "stores" in storeInfo && Array.isArray((storeInfo as any).stores)) {
+      arr = (storeInfo as any).stores;
+    } else if (Array.isArray(storeInfo)) {
+      arr = storeInfo;
+    } else {
+      arr = normalizeStores(storeInfo);
+    }
+    
+    const processed = arr
+      .filter((s) => s && (s.StoreNbr != null || s.StoreNumber != null))
+      .map((s) => ({
+        ...s,
+        StoreNbr: String(s.StoreNbr || s.StoreNumber || s.ID || ''),
+        District: s.District ? String(s.District) : undefined,
+      }));
+    return processed;
+  }, [storeInfo]);
+
+  const [date, setDate] = React.useState<DateRange | undefined>(() => {
+    const fiscalMTD = getFiscalMonthToDate();
+    return {
+      from: fiscalMTD.start,
+      to: fiscalMTD.end,
+    };
   });
   const [popoverOpen, setPopoverOpen] = React.useState(false);
 
-  const districts = React.useMemo(() => [...new Set(storeInfo.map(s => s.District))], [storeInfo]);
-  const [selectedDistrict, setSelectedDistrict] = React.useState<string | null>(null);
-  const storesInDistrict = React.useMemo(() => 
-    storeInfo.filter(s => s.District === selectedDistrict), 
-    [storeInfo, selectedDistrict]
-  );
-  
-  const setPresetDate = (preset: 'last7' | 'last30' | 'thisYear' | 'lastYear') => {
-    const today = new Date();
-    let from: Date;
-    let to: Date = today;
+  // distinct, non-empty districts
+  const districts = React.useMemo(() => {
+    const result = Array.from(new Set(stores.map((s) => s.District).filter(Boolean))) as string[];
+    return result;
+  }, [stores]);
 
-    switch(preset) {
-        case 'last7':
-            from = addDays(today, -7);
-            break;
-        case 'last30':
-            from = addDays(today, -30);
-            break;
-        case 'thisYear':
-            from = startOfYear(today);
-            break;
-        case 'lastYear':
-            from = startOfYear(subYears(today, 1));
-            to = endOfYear(subYears(today, 1));
-            break;
+  const [selectedDistrict, setSelectedDistrict] = React.useState<string>("all");
+  const [selectedStore, setSelectedStore] = React.useState<string>("all");
+
+  // Call onDateChange with initial YTD date when component mounts
+  React.useEffect(() => {
+    onDateChange?.(date);
+  }, [onDateChange]); // Only run once on mount
+
+  const storesInDistrict = React.useMemo(() => {
+    const pool =
+      selectedDistrict === "all"
+        ? stores
+        : stores.filter((s) => s.District === selectedDistrict);
+    // drop rows that somehow still lack StoreNbr
+    return pool.filter((s) => s.StoreNbr && s.StoreNbr !== "undefined");
+  }, [stores, selectedDistrict]);
+
+  const setPresetDate = (preset: "currentWeek" | "lastWeek" | "currentMonth" | "lastMonth" | "monthToDate" | "last30" | "thisYear" | "lastYear") => {
+    const today = new Date();
+    let from = today;
+    let to = today;
+
+    switch (preset) {
+      case "currentWeek":
+        const currentWeek = getCurrentWeek();
+        from = currentWeek.start;
+        to = currentWeek.end;
+        break;
+      case "lastWeek":
+        const lastWeek = getLastWeek();
+        from = lastWeek.start;
+        to = lastWeek.end;
+        break;
+      case "currentMonth":
+        const currentMonth = getCurrentFiscalMonth();
+        from = currentMonth.start;
+        to = currentMonth.end;
+        break;
+      case "lastMonth":
+        const lastMonth = getPreviousFiscalMonth();
+        from = lastMonth.start;
+        to = lastMonth.end;
+        break;
+      case "monthToDate":
+        const monthToDate = getFiscalMonthToDate();
+        from = monthToDate.start;
+        to = monthToDate.end;
+        break;
+      case "last30":
+        from = addDays(today, -30);
+        break;
+      case "thisYear":
+        const fiscalYTD = getFiscalYTD();
+        from = fiscalYTD.start;
+        to = fiscalYTD.end;
+        break;
+      case "lastYear":
+        const previousFY = getPreviousFiscalYear();
+        from = previousFY.start;
+        to = previousFY.end;
+        break;
     }
-    setDate({ from, to });
+    const newDate = { from, to };
+    setDate(newDate);
+    onDateChange?.(newDate);
+    onTimeframeChange?.(preset);
     setPopoverOpen(false);
-  }
+  };
 
   return (
     <div className={cn("flex items-center space-x-2", className)}>
-       <Select onValueChange={setSelectedDistrict}>
-        <SelectTrigger className="w-[150px]">
+      {/* District select */}
+      <Select
+        value={selectedDistrict}
+        onValueChange={(v) => {
+          setSelectedDistrict(v);
+          setSelectedStore("all");
+          onDistrictChange?.(v);
+        }}
+      >
+        <SelectTrigger className="w-[180px]">
           <SelectValue placeholder="All Districts" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All Districts</SelectItem>
-          {districts.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+          <SelectItem key="d-all" value="all">
+        All Districts
+          </SelectItem>
+          {[...districts].sort((a, b) => String(a).localeCompare(String(b))).map((d) => {
+        const dv = String(d); // guaranteed non-empty by filter(Boolean)
+        return (
+          <SelectItem key={`d-${dv}`} value={dv}>
+            {dv}
+          </SelectItem>
+        );
+          })}
         </SelectContent>
       </Select>
 
-      <Select disabled={!selectedDistrict || storesInDistrict.length === 0}>
-        <SelectTrigger className="w-[180px]">
+      {/* Store select */}
+      <Select
+        value={selectedStore}
+        onValueChange={(v) => {
+          setSelectedStore(v);
+          onStoreChange?.(v);
+        }}
+      >
+        <SelectTrigger className="w-[200px]">
           <SelectValue placeholder="All Stores" />
         </SelectTrigger>
         <SelectContent>
-           <SelectItem value="all">All Stores</SelectItem>
-          {storesInDistrict.map(s => <SelectItem key={s.StoreNbr} value={s.StoreNbr}>#{s.StoreNbr}</SelectItem>)}
+          <SelectItem key="s-all" value="all">
+            All Stores
+          </SelectItem>
+          {storesInDistrict.map((s) => {
+            const storeNbr = String(s.StoreNbr);
+            // Remove "we" prefix from store number for display (case insensitive)
+            const cleanStoreNbr = storeNbr.replace(/^we/i, '');
+            return (
+              <SelectItem key={`s-${storeNbr}`} value={storeNbr}>
+                #{cleanStoreNbr}
+                {s.StoreName ? ` — ${s.StoreName}` : ""}
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
 
+      {/* Date range */}
       <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
         <PopoverTrigger asChild>
           <Button
             id="date"
-            variant={"outline"}
+            variant="outline"
             className={cn(
               "w-[260px] justify-start text-left font-normal",
               !date && "text-muted-foreground"
@@ -103,8 +226,7 @@ export function Filters({ className, storeInfo }: FiltersProps) {
             {date?.from ? (
               date.to ? (
                 <>
-                  {format(date.from, "LLL dd, y")} -{" "}
-                  {format(date.to, "LLL dd, y")}
+                  {format(date.from, "LLL dd, y")} - {format(date.to, "LLL dd, y")}
                 </>
               ) : (
                 format(date.from, "LLL dd, y")
@@ -120,24 +242,66 @@ export function Filters({ className, storeInfo }: FiltersProps) {
             mode="range"
             defaultMonth={date?.from}
             selected={date}
-            onSelect={setDate}
+            onSelect={(newDate) => {
+              setDate(newDate);
+              onDateChange?.(newDate);
+              // When user manually selects dates, clear the timeframe preset selection
+              onTimeframeChange?.('custom');
+            }}
             numberOfMonths={2}
           />
-           <div className="flex flex-col border-l p-2 space-y-2">
-            <Button variant="ghost" className="justify-start" onClick={() => setPresetDate('last7')}>Last 7 Days</Button>
-            <Button variant="ghost" className="justify-start" onClick={() => setPresetDate('last30')}>Last 30 Days</Button>
+          <div className="flex flex-col border-l p-2 space-y-2">
+            <Button 
+              variant={selectedTimeframe === 'monthToDate' ? 'default' : 'ghost'} 
+              className="justify-start" 
+              onClick={() => setPresetDate("monthToDate")}
+            >
+              This Month
+            </Button>
+            <Button 
+              variant={selectedTimeframe === 'lastMonth' ? 'default' : 'ghost'} 
+              className="justify-start" 
+              onClick={() => setPresetDate("lastMonth")}
+            >
+              Last Month
+            </Button>
             <Separator />
-            <Button variant="ghost" className="justify-start" onClick={() => setPresetDate('thisYear')}>This Year</Button>
-            <Button variant="ghost" className="justify-start" onClick={() => setPresetDate('lastYear')}>Last Year</Button>
+            <Button 
+              variant={selectedTimeframe === 'currentWeek' ? 'default' : 'ghost'} 
+              className="justify-start" 
+              onClick={() => setPresetDate("currentWeek")}
+            >
+              This Week
+            </Button>
+            <Button 
+              variant={selectedTimeframe === 'lastWeek' ? 'default' : 'ghost'} 
+              className="justify-start" 
+              onClick={() => setPresetDate("lastWeek")}
+            >
+              Last Week
+            </Button>
+            <Separator />
+            <Button 
+              variant={selectedTimeframe === 'thisYear' ? 'default' : 'ghost'} 
+              className="justify-start" 
+              onClick={() => setPresetDate("thisYear")}
+            >
+              This Year
+            </Button>
+            <Button 
+              variant={selectedTimeframe === 'lastYear' ? 'default' : 'ghost'} 
+              className="justify-start" 
+              onClick={() => setPresetDate("lastYear")}
+            >
+              Last Year
+            </Button>
           </div>
         </PopoverContent>
       </Popover>
-      <div className="flex items-center space-x-2">
-        <Switch id="compare-ly" />
-        <Label htmlFor="compare-ly">Vs. LY</Label>
-      </div>
+
+      {/* Export */}
       <Button variant="outline" size="icon">
-        <Download className="h-4 w-4"/>
+        <Download className="h-4 w-4" />
         <span className="sr-only">Download CSV</span>
       </Button>
     </div>

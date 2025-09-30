@@ -1,55 +1,128 @@
 "use client"
 
-import { Bar, BarChart, CartesianGrid, XAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis, TooltipProps } from "recharts"
 
 import {
   ChartContainer,
   ChartTooltip,
-  ChartTooltipContent,
   ChartLegend,
   ChartLegendContent,
 } from "@/components/ui/chart"
+import { NameType, ValueType } from "recharts/types/component/DefaultTooltipContent"
 
-const chartData = [
-  { month: "January", food: 32.5, alcohol: 22.1 },
-  { month: "February", food: 33.1, alcohol: 22.8 },
-  { month: "March", food: 31.9, alcohol: 21.9 },
-  { month: "April", food: 32.7, alcohol: 23.5 },
-  { month: "May", food: 34.2, alcohol: 24.1 },
-  { month: "June", food: 33.5, alcohol: 23.2 },
-]
-
-const chartConfig = {
-  food: {
-    label: "Food %",
-    color: "hsl(var(--chart-1))",
-  },
-  alcohol: {
-    label: "Alcohol %",
-    color: "hsl(var(--chart-2))",
-  },
+interface CostChartData {
+  period: string;
+  food: number;
+  beer: number;
+  liquor: number;
 }
 
-export function CostBarsChart() {
+interface CostBarsChartProps {
+  data?: CostChartData[];
+}
+
+const chartConfig = {
+  food: { label: "Food", color: "hsl(var(--chart-1))" },
+  beer: { label: "Beer", color: "hsl(var(--chart-2))" },
+  liquor: { label: "Liquor", color: "hsl(var(--chart-3))" },
+} as const;
+
+// Custom tooltip that appends "%" and keeps the color swatch
+function PercentTooltip({
+  active,
+  label,
+  payload,
+}: TooltipProps<ValueType, NameType>) {
+  if (!active || !payload || payload.length === 0) return null;
+
   return (
-    <ChartContainer config={chartConfig} className="min-h-[200px] w-full">
-      <BarChart accessibilityLayer data={chartData}>
+    <div className="rounded-lg border bg-background p-2 shadow-md">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col">
+          <span className="text-[0.70rem] uppercase text-muted-foreground">
+            Period
+          </span>
+          <span className="font-bold text-muted-foreground">{label}</span>
+        </div>
+      </div>
+      <div className="grid gap-2">
+        {payload.map((entry) => (
+          <div key={entry.dataKey} className="flex items-center gap-2">
+            <div
+              className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-[0.70rem] uppercase text-muted-foreground">
+              {chartConfig[entry.dataKey as keyof typeof chartConfig]?.label}
+            </span>
+            <span className="font-mono font-bold tabular-nums text-muted-foreground">
+              {entry.value}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function CostBarsChart({ data }: CostBarsChartProps) {
+  // Check if we have valid data
+  if (!data || data.length === 0) {
+    return (
+      <div className="min-h-[200px] w-full flex items-center justify-center text-muted-foreground">
+        <div className="text-center">
+          <p className="text-lg font-medium">No Cost Data Available</p>
+          <p className="text-sm mt-1">Cost data will appear here when available for the selected period.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <ChartContainer config={chartConfig} className="h-[250px] w-full">
+      <AreaChart accessibilityLayer data={data} margin={{ left: 12, right: 12 }}>
         <CartesianGrid vertical={false} />
         <XAxis
-          dataKey="month"
+          dataKey="period"
           tickLine={false}
-          tickMargin={10}
           axisLine={false}
+          tickMargin={8}
           tickFormatter={(value) => value.slice(0, 3)}
         />
-        <ChartTooltip
-          cursor={false}
-          content={<ChartTooltipContent indicator="dashed" />}
+        <YAxis
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          tickFormatter={(value) => `${value}%`}
         />
+        <ChartTooltip content={<PercentTooltip />} />
         <ChartLegend content={<ChartLegendContent />} />
-        <Bar dataKey="food" fill="var(--color-food)" radius={4} />
-        <Bar dataKey="alcohol" fill="var(--color-alcohol)" radius={4} />
-      </BarChart>
+
+        <Area
+          dataKey="food"
+          type="natural"
+          fill="var(--color-food)"
+          fillOpacity={0.8}
+          stroke="var(--color-food)"
+          stackId="a"
+        />
+        <Area
+          dataKey="beer"
+          type="natural"
+          fill="var(--color-beer)"
+          fillOpacity={0.8}
+          stroke="var(--color-beer)"
+          stackId="a"
+        />
+        <Area
+          dataKey="liquor"
+          type="natural"
+          fill="var(--color-liquor)"
+          fillOpacity={0.8}
+          stroke="var(--color-liquor)"
+          stackId="a"
+        />
+      </AreaChart>
     </ChartContainer>
   )
 }

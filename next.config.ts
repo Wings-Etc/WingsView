@@ -2,6 +2,10 @@ import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
   /* config options here */
+  basePath: '/wingsview',
+  assetPrefix: '/wingsview',
+  output: 'standalone',
+  trailingSlash: true,
   typescript: {
     ignoreBuildErrors: true,
   },
