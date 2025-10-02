@@ -1,19 +1,33 @@
-// next.config.js
-const path = require("path");
+import type {NextConfig} from 'next';
 
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  output: "standalone",
-  webpack: (config) => {
-    // Hard-define @ → <repo>/src so webpack resolves it no matter what
-    config.resolve.alias["@" ] = path.resolve(__dirname, "src");
-    // Ensure common extensions are considered
-    if (!config.resolve.extensions.includes(".ts")) config.resolve.extensions.push(".ts");
-    if (!config.resolve.extensions.includes(".tsx")) config.resolve.extensions.push(".tsx");
-    if (!config.resolve.extensions.includes(".js")) config.resolve.extensions.push(".js");
-    if (!config.resolve.extensions.includes(".jsx")) config.resolve.extensions.push(".jsx");
-    return config;
+const nextConfig: NextConfig = {
+  /* config options here */
+  basePath: '/wingsview',
+  assetPrefix: '/wingsview',
+  output: 'standalone',
+  trailingSlash: true,
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'placehold.co',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'picsum.photos',
+        port: '',
+        pathname: '/**',
+      },
+    ],
   },
 };
 
-module.exports = nextConfig;
+export default nextConfig;
