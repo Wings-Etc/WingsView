@@ -26,6 +26,8 @@ jobs:
 
       - name: Install deps (CI clean)
         run: npm ci
+        env:
+          NPM_CONFIG_PRODUCTION: "false"
 
       - name: Build (Next standalone)
         run: npm run build
