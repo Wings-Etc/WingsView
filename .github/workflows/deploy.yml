@@ -1,0 +1,114 @@
+# .github/workflows/deploy.yml
+name: Deploy wingsview (releases)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: wingsview
+      APP_BASE: /srv/www/wingsview
+      REL: ${{ github.sha }}
+      NODE_ENV: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install deps (CI clean)
+        run: npm ci
+
+      - name: Build (Next standalone)
+        run: npm run build
+
+      # Package the minimal runtime (standalone server + static assets + public/)
+      - name: Create artifact
+        run: |
+          set -e
+          mkdir -p package
+          # Next’s standalone output lives in .next/standalone
+          cp -R .next/standalone package/standalone
+          cp -R .next/static package/static
+          if [ -d public ]; then cp -R public package/public; fi
+          # Optional: ship version file for debugging
+          echo "${{ github.sha }}" > package/RELEASE_SHA
+          tar -C package -czf artifact.tgz .
+
+      - name: Upload artifact to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: "artifact.tgz"
+          target: "/tmp/${{ env.APP_NAME }}-${{ env.REL }}.tgz"
+
+      - name: Activate release on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            set -euo pipefail
+
+            APP_NAME="${{ env.APP_NAME }}"
+            APP_BASE="${{ env.APP_BASE }}"
+            REL="${{ env.REL }}"
+            ARCHIVE="/tmp/${APP_NAME}-${REL}.tgz"
+            RELEASES="${APP_BASE}/releases"
+            RELDIR="${RELEASES}/${REL}"
+            CURR="${APP_BASE}/current"
+
+            echo "→ Ensure base dirs exist"
+            mkdir -p "${RELEASES}"
+
+            echo "→ Unpack new release to ${RELDIR}"
+            mkdir -p "${RELDIR}"
+            tar -C "${RELDIR}" -xzf "${ARCHIVE}"
+            rm -f "${ARCHIVE}"
+
+            # After extract we have RELDIR/{standalone,static,public?}
+            # Move into Next’s expected tree: RELDIR/.next/{standalone,static}
+            echo "→ Normalize Next output structure"
+            mkdir -p "${RELDIR}/.next"
+            if [ -d "${RELDIR}/standalone" ]; then
+              rsync -a "${RELDIR}/standalone/" "${RELDIR}/.next/standalone/"
+              rm -rf "${RELDIR}/standalone"
+            fi
+            if [ -d "${RELDIR}/static" ]; then
+              rsync -a "${RELDIR}/static/" "${RELDIR}/.next/static/"
+              rm -rf "${RELDIR}/static"
+            fi
+
+            # Sanity checks
+            if [ ! -f "${RELDIR}/.next/standalone/server.js" ]; then
+              echo "FATAL: server.js missing in ${RELDIR}/.next/standalone"; exit 1
+            fi
+
+            # Atomic swap: point current → new release
+            echo "→ Pointing ${CURR} to ${RELDIR}"
+            ln -sfn "${RELDIR}" "${CURR}"
+
+            # Reload only this app
+            echo "→ Reloading PM2 app: ${APP_NAME}"
+            pm2 reload "${APP_NAME}"
+            pm2 save
+
+            # Optional: keep last 5 releases (oldest gets deleted)
+            echo "→ Pruning old releases"
+            cd "${RELEASES}"
+            ls -1t | tail -n +6 | xargs -r rm -rf --
+
+            echo "→ Done."
