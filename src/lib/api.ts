@@ -14,7 +14,7 @@ const fetcher = async (endpoint: string) => {
   });
   if (!res.ok) {
     console.error(`API Error: ${res.statusText} on ${endpoint}`);
-    // Return empty array or throw error depending on desired behavior for failed requests
+    // Return empty array or throw error depending on desired behavior for failed requestss need
     return [];
   }
   return res.json();
