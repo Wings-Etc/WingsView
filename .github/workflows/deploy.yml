@@ -1,5 +1,5 @@
 # .github/workflows/deploy.yml
-name: Deploy wingsview (releases)
+name: Deploy wingsview (artifact + releases)
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install deps (CI clean)
+      - name: Install deps (with dev)
         run: npm ci
         env:
           NPM_CONFIG_PRODUCTION: "false"
@@ -32,25 +32,42 @@ jobs:
       - name: Build (Next standalone)
         run: npm run build
 
-      # Package the minimal runtime (standalone server + static assets + public/)
       - name: Create artifact
         run: |
           set -e
           mkdir -p package
-          # Next’s standalone output lives in .next/standalone
           cp -R .next/standalone package/standalone
-          cp -R .next/static package/static
+          cp -R .next/static package/static || true
           if [ -d public ]; then cp -R public package/public; fi
-          # Optional: ship version file for debugging
           echo "${{ github.sha }}" > package/RELEASE_SHA
           tar -C package -czf artifact.tgz .
 
-      - name: Upload artifact to server
-        uses: appleboy/ssh-action@master
+      # ---- write SSH key to file to avoid formatting issues ----
+      - name: Write SSH key
+        shell: bash
+        run: |
+          umask 077
+          cat > key.pem <<'EOF'
+          ${{ secrets.SSH_PRIVATE_KEY }}
+          EOF
+          chmod 600 key.pem
+
+      - name: Sanity-check SSH
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key_path: key.pem
+          port: 22
+          script: 'echo "SSH OK on $(hostname) as $(whoami)"'
+
+      - name: Upload artifact to /tmp (MUST match activate step)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key_path: key.pem
+          port: 22
           source: "artifact.tgz"
           target: "/tmp/${{ env.APP_NAME }}-${{ env.REL }}.tgz"
 
@@ -59,10 +76,10 @@ jobs:
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key_path: key.pem
+          port: 22
           script: |
             set -euo pipefail
-
             APP_NAME="${{ env.APP_NAME }}"
             APP_BASE="${{ env.APP_BASE }}"
             REL="${{ env.REL }}"
@@ -72,43 +89,26 @@ jobs:
             CURR="${APP_BASE}/current"
 
             echo "→ Ensure base dirs exist"
-            mkdir -p "${RELEASES}"
+            mkdir -p "${RELEASES}" "${RELDIR}"
 
             echo "→ Unpack new release to ${RELDIR}"
-            mkdir -p "${RELDIR}"
             tar -C "${RELDIR}" -xzf "${ARCHIVE}"
             rm -f "${ARCHIVE}"
 
-            # After extract we have RELDIR/{standalone,static,public?}
-            # Move into Next’s expected tree: RELDIR/.next/{standalone,static}
-            echo "→ Normalize Next output structure"
+            echo "→ Normalize Next output"
             mkdir -p "${RELDIR}/.next"
-            if [ -d "${RELDIR}/standalone" ]; then
-              rsync -a "${RELDIR}/standalone/" "${RELDIR}/.next/standalone/"
-              rm -rf "${RELDIR}/standalone"
-            fi
-            if [ -d "${RELDIR}/static" ]; then
-              rsync -a "${RELDIR}/static/" "${RELDIR}/.next/static/"
-              rm -rf "${RELDIR}/static"
-            fi
+            [ -d "${RELDIR}/standalone" ] && rsync -a "${RELDIR}/standalone/" "${RELDIR}/.next/standalone/" && rm -rf "${RELDIR}/standalone"
+            [ -d "${RELDIR}/static" ]     && rsync -a "${RELDIR}/static/"     "${RELDIR}/.next/static/"     && rm -rf "${RELDIR}/static"
+            [ -d "${RELDIR}/public" ] || mkdir -p "${RELDIR}/public"
 
-            # Sanity checks
-            if [ ! -f "${RELDIR}/.next/standalone/server.js" ]; then
-              echo "FATAL: server.js missing in ${RELDIR}/.next/standalone"; exit 1
-            fi
+            test -f "${RELDIR}/.next/standalone/server.js" || { echo "server.js missing"; exit 1; }
 
-            # Atomic swap: point current → new release
-            echo "→ Pointing ${CURR} to ${RELDIR}"
+            echo "→ Point current → ${RELDIR}"
             ln -sfn "${RELDIR}" "${CURR}"
 
-            # Reload only this app
-            echo "→ Reloading PM2 app: ${APP_NAME}"
-            pm2 reload "${APP_NAME}"
+            echo "→ Reload ${APP_NAME}"
+            pm2 reload "${APP_NAME}" || pm2 start "${CURR}/.next/standalone/server.js" --name "${APP_NAME}"
             pm2 save
 
-            # Optional: keep last 5 releases (oldest gets deleted)
-            echo "→ Pruning old releases"
-            cd "${RELEASES}"
-            ls -1t | tail -n +6 | xargs -r rm -rf --
-
-            echo "→ Done."
+            echo "→ Prune old releases (keep last 5)"
+            cd "${RELEASES}" && ls -1t | tail -n +6 | xargs -r rm -rf --
