@@ -42,7 +42,7 @@ import {
 import { LaborChart } from '@/components/dashboard/labor-chart';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { StoreInfo } from '@/types';
+import type { StoreInfo, DailyPerformance, WeeklySnapshot } from '@/types';
 
 function normalizeStores(data: unknown): StoreInfo[] {
   if (!data) return [];
@@ -145,6 +145,21 @@ export default function DashboardPage() {
     const isExactWeek = daysDiff === 6;
         
     return isStartMonday && isEndSunday && isExactWeek;
+  };
+
+  // Helper function to check if a date range includes the current incomplete week
+  const dateRangeIncludesCurrentWeek = (startDate: Date, endDate: Date): boolean => {
+    const currentWeek = getCurrentWeek();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Normalize to start of day
+    
+    // Check if the current week is incomplete (today is not Sunday or beyond the week end)
+    const isCurrentWeekIncomplete = today < currentWeek.end;
+    
+    // Check if the date range overlaps with current incomplete week
+    const overlapsCurrentWeek = (startDate <= currentWeek.end) && (endDate >= currentWeek.start);
+    
+    return isCurrentWeekIncomplete && overlapsCurrentWeek;
   };
 
   // Get normalized store info for use in filtering
@@ -700,8 +715,43 @@ export default function DashboardPage() {
             console.log('❌ No snapshots available for large date range, showing empty data');
             currentData = [];
           }
+        } else if (dateRangeDays <= 30 && dateRangeIncludesCurrentWeek(dateRange.from, dateRange.to) && storeFilters.length === 0) {
+          console.log('📊 Medium date range includes current incomplete week, using hybrid approach');
+          
+          // For medium-sized ranges that include current incomplete week, use hybrid approach
+          const currentWeek = getCurrentWeek();
+          let snapshotData: DailyPerformance[] = [];
+          let performanceData: DailyPerformance[] = [];
+          
+          // Load snapshots for complete weeks in the range
+          const completeWeekEnd = new Date(currentWeek.start);
+          completeWeekEnd.setDate(completeWeekEnd.getDate() - 1); // Day before current week starts
+          
+          if (completeWeekEnd >= dateRange.from) {
+            const snapshots = await getSnapshots(
+              formatDateForAPI(dateRange.from),
+              formatDateForAPI(completeWeekEnd),
+              storeFilters
+            );
+            snapshotData = convertSnapshotsToPerformance(snapshots);
+          }
+          
+          // Load performance data for current incomplete week portion
+          const currentWeekStart = new Date(Math.max(currentWeek.start.getTime(), dateRange.from.getTime()));
+          const currentWeekEndInRange = new Date(Math.min(dateRange.to.getTime(), new Date().getTime()));
+          
+          if (currentWeekStart <= currentWeekEndInRange) {
+            performanceData = await getPerformance(
+              formatDateForAPI(currentWeekStart),
+              formatDateForAPI(currentWeekEndInRange),
+              storeFilters
+            );
+          }
+          
+          // Combine both datasets
+          currentData = [...snapshotData, ...performanceData];
         } else {
-          console.log('📊 Using performance endpoint for small incomplete date range or with store filters');
+          console.log('📊 Using performance endpoint for small date range or with store filters');
           currentData = await getPerformance(
             formatDateForAPI(dateRange.from),
             formatDateForAPI(dateRange.to),
@@ -936,14 +986,45 @@ export default function DashboardPage() {
       const fiscalMTD = getFiscalMonthToDate();
       const lastYearFiscalMTD = getLastYearFiscalMonthToDate();
       
-      console.log('📊 Loading month-to-date snapshots for immediate display...');
+      console.log('📊 Loading month-to-date data for immediate display...');
       
-      // Load current month-to-date snapshots
-      const currentMTDSnapshots = await getSnapshots(
-        formatDateForAPI(fiscalMTD.start),
-        formatDateForAPI(fiscalMTD.end),
-        [] // No store filtering to get all stores
-      );
+      // Check if current week is incomplete and within MTD period
+      const currentWeek = getCurrentWeek();
+      const isCurrentWeekInMTD = currentWeek.start >= fiscalMTD.start && currentWeek.start <= fiscalMTD.end;
+      const isCurrentWeekComplete = currentWeek.end <= fiscalMTD.end;
+      
+      let currentMTDSnapshots: WeeklySnapshot[] = [];
+      let currentWeekPerformanceData: DailyPerformance[] = [];
+      
+      if (isCurrentWeekInMTD && !isCurrentWeekComplete) {
+        console.log('📊 Current week is incomplete within MTD period, using hybrid approach');
+        
+        // Load snapshots for complete weeks in MTD period (up to start of current week)
+        const completeWeeksEnd = new Date(currentWeek.start);
+        completeWeeksEnd.setDate(completeWeeksEnd.getDate() - 1); // Day before current week starts
+        
+        if (completeWeeksEnd >= fiscalMTD.start) {
+          currentMTDSnapshots = await getSnapshots(
+            formatDateForAPI(fiscalMTD.start),
+            formatDateForAPI(completeWeeksEnd),
+            [] // No store filtering to get all stores
+          );
+        }
+        
+        // Load performance data for current incomplete week
+        currentWeekPerformanceData = await getPerformance(
+          formatDateForAPI(currentWeek.start),
+          formatDateForAPI(fiscalMTD.end), // MTD end (yesterday)
+          [] // No store filtering to get all stores
+        );
+      } else {
+        // Load complete month-to-date snapshots (no incomplete week issue)
+        currentMTDSnapshots = await getSnapshots(
+          formatDateForAPI(fiscalMTD.start),
+          formatDateForAPI(fiscalMTD.end),
+          [] // No store filtering to get all stores
+        );
+      }
       
       // Load last year month-to-date snapshots for comparison
       const lastYearMTDSnapshots = await getSnapshots(
@@ -952,15 +1033,72 @@ export default function DashboardPage() {
         [] // No store filtering to get all stores
       );
       
-      // Combine current and last year MTD data
-      const mtdSnapshots = [...currentMTDSnapshots, ...lastYearMTDSnapshots];
+      // Convert current week performance data to snapshot format if we have any
+      let currentWeekAsSnapshots: WeeklySnapshot[] = [];
+      if (currentWeekPerformanceData.length > 0) {
+        // Group performance data by store and create pseudo-snapshots for the current incomplete week
+        const storeGroups = currentWeekPerformanceData.reduce((acc, perf) => {
+          const storeKey = perf.StoreNbr || perf.ID || '';
+          if (!acc[storeKey]) {
+            acc[storeKey] = [];
+          }
+          acc[storeKey].push(perf);
+          return acc;
+        }, {} as Record<string, DailyPerformance[]>);
+        
+        currentWeekAsSnapshots = Object.entries(storeGroups).map(([storeNbr, perfData]) => {
+          // Aggregate performance data into snapshot format
+          const totalSales = perfData.reduce((sum, p) => sum + (p.SalesSubTotal || 0), 0);
+          const totalFoodSales = perfData.reduce((sum, p) => sum + (p.FoodSales || 0), 0);
+          const totalBeerSales = perfData.reduce((sum, p) => sum + (p.BeerSales || 0), 0);
+          const totalLiquorSales = perfData.reduce((sum, p) => sum + (p.LiquorSales || 0), 0);
+          const totalCovers = perfData.reduce((sum, p) => sum + (p.Covers || 0), 0);
+          const totalLaborCost = perfData.reduce((sum, p) => sum + (p.total_labor_cost || 0), 0);
+          const totalLaborHours = perfData.reduce((sum, p) => sum + (p.total_labor_hours || 0), 0);
+          
+          return {
+            StoreNbr: storeNbr,
+            period_end: formatDateForAPI(currentWeek.end), // Use current week end as period_end
+            SalesSubtotal: totalSales,
+            FoodSales: totalFoodSales,
+            BeerSales: totalBeerSales,
+            LiquorSales: totalLiquorSales,
+            covers: totalCovers,
+            total_labor_cost: totalLaborCost,
+            revenue_per_labor_hr: totalLaborHours > 0 ? totalSales / totalLaborHours : 0,
+            // Add other fields with default values to match WeeklySnapshot interface
+            iso_year: currentWeek.end.getFullYear(),
+            week_number: Math.ceil((currentWeek.end.getTime() - new Date(currentWeek.end.getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000)),
+            FoodCost: 0,
+            PaperCost: 0,
+            LiquorCost: 0,
+            BeerCost: 0,
+            AlcoholCost: 0,
+            DiscountCostPercent: 0,
+            FoodCostPercent: 0,
+            LiquorCostPercent: 0,
+            BeerCostPercent: 0,
+            AlcoholCostPercent: 0,
+            LiquorPourCostPercent: 0,
+            BeerPourCostPercent: 0,
+            AlcoholPourCostPercent: 0,
+            flpda_net2: 0,
+            total_flpda_pct: 0
+          } as WeeklySnapshot;
+        });
+      }
+      
+      // Combine all MTD data: complete weeks + current incomplete week + last year data
+      const mtdSnapshots = [...currentMTDSnapshots, ...currentWeekAsSnapshots, ...lastYearMTDSnapshots];
       
       setWeeklySnapshots(mtdSnapshots);
       setHistoricalSnapshots(mtdSnapshots); // Show MTD data initially in the table
-      console.log('✅ Month-to-date snapshots loaded for immediate display:', {
-        current: currentMTDSnapshots.length,
+      console.log('✅ Month-to-date data loaded for immediate display:', {
+        currentSnapshots: currentMTDSnapshots.length,
+        currentWeekPerformance: currentWeekAsSnapshots.length,
         lastYear: lastYearMTDSnapshots.length,
-        total: mtdSnapshots.length
+        total: mtdSnapshots.length,
+        hasIncompleteWeek: currentWeekAsSnapshots.length > 0
       });
 
       // Mark initial data as loaded and remove main loading overlay
@@ -1290,6 +1428,29 @@ export default function DashboardPage() {
           <KpiCard title="SOCi Rating" value="{kpis.sociRating}" valueLY={kpis.sociRatingComparison} isCurrentWeek={isCurrentWeekSelected} currentPeriod={currentPeriodFormatted} lastYearPeriod={lastYearPeriodFormatted} />
         </div>
 
+        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+          <Card className="lg:col-span-3">
+            <CardHeader>
+              <CardTitle>Store Sales Heatmap</CardTitle>
+              <CardDescription>Gross Sales for Period</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {/* ✅ pass stores with gross sales data */}
+              <StoreHeatmap stores={storesWithGrossSales} />
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-3">
+            <CardHeader>
+              <CardTitle>Top / Bottom 5 Stores</CardTitle>
+              <CardDescription>By Gross Sales for Period</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {/* ✅ use gross sales data like the heatmap */}
+              <TopBottomTable stores={storesWithGrossSales} />
+            </CardContent>
+          </Card>
+        </div>
         <div className="grid gap-4 md:grid-cols-1">
           <Card>
             <CardHeader>
@@ -1344,30 +1505,6 @@ export default function DashboardPage() {
                 </div>
               )}
               <CostBarsChart data={costChartData} />
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-          <Card className="lg:col-span-3">
-            <CardHeader>
-              <CardTitle>Store Sales Heatmap</CardTitle>
-              <CardDescription>Gross Sales for Period</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* ✅ pass stores with gross sales data */}
-              <StoreHeatmap stores={storesWithGrossSales} />
-            </CardContent>
-          </Card>
-
-          <Card className="lg:col-span-3">
-            <CardHeader>
-              <CardTitle>Top / Bottom 5 Stores</CardTitle>
-              <CardDescription>By Gross Sales for Period</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* ✅ use gross sales data like the heatmap */}
-              <TopBottomTable stores={storesWithGrossSales} />
             </CardContent>
           </Card>
         </div>
